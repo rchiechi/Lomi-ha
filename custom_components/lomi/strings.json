@@ -1,0 +1,186 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sign in to Lomi",
+        "description": "Use the same email and password as the Lomi app.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "register": {
+        "title": "Register a Lomi",
+        "description": "No Lomi is registered to {email} yet. Enter the serial number printed on the device (or skip and register in the app later).",
+        "data": {
+          "serial_number": "Serial number",
+          "nickname": "Nickname"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Lomi",
+        "description": "The Lomi cloud rejected the stored credentials for {email}. Enter the password again.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the Lomi cloud",
+      "invalid_auth": "Email or password rejected",
+      "invalid_serial": "Enter a serial number",
+      "register_failed": "The Lomi cloud rejected that serial number",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This Lomi account is already configured",
+      "reauth_successful": "Re-authentication was successful",
+      "wrong_account": "Signed in to a different account than the one being re-authenticated"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Lomi polling options",
+        "data": {
+          "poll_interval": "Poll interval (seconds)",
+          "poll_device_status": "Also poll /devices/status",
+          "poll_pending_commands": "Also poll pending commands"
+        },
+        "data_description": {
+          "poll_interval": "How often to fetch the device record from the Lomi cloud.",
+          "poll_device_status": "Transient status route; observed empty while idle, may carry cycle state.",
+          "poll_pending_commands": "Needed for scheduled-start and command-acknowledged tracking."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "filter_counter": { "name": "Filter counter" },
+      "last_filter_reset": { "name": "Last filter reset" },
+      "filter_counter_modified": { "name": "Filter counter updated" },
+      "last_checkin": { "name": "Last cloud update" },
+      "record_version": { "name": "Record version" },
+      "status": { "name": "Status" },
+      "last_command": {
+        "name": "Last command",
+        "state": {
+          "start": "Start",
+          "pause": "Pause",
+          "resume": "Resume",
+          "stop": "Stop",
+          "prog": "Program change"
+        }
+      },
+      "pending_commands": { "name": "Pending commands" },
+      "next_scheduled_start": { "name": "Next scheduled start" },
+      "device_type": { "name": "Device type" },
+      "thing_name": { "name": "IoT thing name" },
+      "manufacture_date": { "name": "Manufacture date" }
+    },
+    "binary_sensor": {
+      "scheduled_start": { "name": "Scheduled start" },
+      "command_pending": { "name": "Command pending" }
+    },
+    "select": {
+      "mode": {
+        "name": "Program",
+        "state": {
+          "grow": "Grow",
+          "express": "Eco-Express",
+          "lomi_approved": "Lomi Approved",
+          "cleaning": "Cleaning"
+        }
+      }
+    },
+    "button": {
+      "start": { "name": "Start" },
+      "pause": { "name": "Pause" },
+      "resume": { "name": "Resume" },
+      "stop": { "name": "Stop" },
+      "cancel_scheduled": { "name": "Cancel scheduled start" }
+    },
+    "event": {
+      "activity": {
+        "name": "Activity",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "record_updated": "Record updated",
+              "filter_counter_changed": "Filter counter changed (cycle finished)",
+              "filter_reset": "Filter reset",
+              "status_changed": "Status changed",
+              "command_issued": "Command issued",
+              "command_acknowledged": "Command acknowledged"
+            }
+          }
+        }
+      }
+    }
+  },
+  "selector": {
+    "command": {
+      "options": {
+        "start": "Start",
+        "pause": "Pause",
+        "resume": "Resume",
+        "stop": "Stop",
+        "prog": "Program change (no start)"
+      }
+    },
+    "mode": {
+      "options": {
+        "grow": "Grow",
+        "express": "Eco-Express",
+        "lomi_approved": "Lomi Approved",
+        "cleaning": "Cleaning"
+      }
+    }
+  },
+  "services": {
+    "send_command": {
+      "name": "Send command",
+      "description": "Send a raw remote command to a Lomi (start, pause, resume, stop or program change).",
+      "fields": {
+        "device_id": { "name": "Device", "description": "The Lomi to control." },
+        "command": { "name": "Command", "description": "Command to send." },
+        "mode": { "name": "Program", "description": "Program to use; defaults to the Program selector's value." },
+        "start_at": { "name": "Start at", "description": "Optional future time to issue the command (scheduled start)." }
+      }
+    },
+    "schedule_start": {
+      "name": "Schedule start",
+      "description": "Schedule a cycle to start at a future time.",
+      "fields": {
+        "device_id": { "name": "Device", "description": "The Lomi to control." },
+        "start_at": { "name": "Start at", "description": "When the cycle should start." },
+        "mode": { "name": "Program", "description": "Program to use; defaults to the Program selector's value." }
+      }
+    },
+    "cancel_scheduled": {
+      "name": "Cancel scheduled start",
+      "description": "Cancel one scheduled command, or all scheduled starts for the device.",
+      "fields": {
+        "device_id": { "name": "Device", "description": "The Lomi to control." },
+        "command_id": { "name": "Command ID", "description": "Specific command to cancel. Leave empty to cancel every scheduled start." }
+      }
+    },
+    "register_device": {
+      "name": "Register device",
+      "description": "Register a Lomi to the account by serial number.",
+      "fields": {
+        "config_entry_id": { "name": "Account", "description": "Which Lomi account to use (only needed with several accounts)." },
+        "serial_number": { "name": "Serial number", "description": "Serial printed on the device, e.g. L3GBA0625000514." },
+        "nickname": { "name": "Nickname", "description": "Name shown in the Lomi app and Home Assistant." }
+      }
+    }
+  },
+  "exceptions": {
+    "device_not_found": { "message": "Device {device_id} not found." },
+    "not_a_lomi_device": { "message": "Device {device_id} is not a Lomi." },
+    "device_not_loaded": { "message": "Device {device_id} belongs to a Lomi account that is not loaded." },
+    "start_time_in_past": { "message": "Start time {start_at} is not in the future." },
+    "ambiguous_entry": { "message": "Specify which Lomi account to use (config_entry_id)." }
+  }
+}
