@@ -1,5 +1,7 @@
 # Lomi for Home Assistant
 
+<img src="brand/custom_integrations/lomi/icon@2x.png" alt="Lomi 3" width="160" align="right">
+
 Unofficial [HACS](https://hacs.xyz) integration for the **Lomi** countertop
 composter (Classic, Bloom and Lomi 3 "Sprout"). It talks to the same cloud API
 the official app uses (`api.lomi-app.net` behind AWS Cognito), so it works
@@ -149,6 +151,14 @@ Start an Eco-Express cycle at 23:00 tonight:
   app obtains through an unknown route; polling is used instead.
 * `resume` is sent exactly like the other commands but has not been observed
   in an app capture.
+
+## Branding
+
+Home Assistant and HACS load integration icons from
+[brands.home-assistant.io](https://brands.home-assistant.io), not from this
+repository. The icon assets in `brand/custom_integrations/lomi/` follow the
+[home-assistant/brands](https://github.com/home-assistant/brands) spec and are
+submitted there; until that PR is merged a placeholder icon is shown.
 
 ## Development notes
 
