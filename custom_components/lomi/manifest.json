@@ -1,7 +1,9 @@
 {
   "domain": "lomi",
   "name": "Lomi",
-  "codeowners": ["@rchiechi"],
+  "codeowners": [
+    "@rchiechi"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/rchiechi/Lomi-ha",
@@ -9,5 +11,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/rchiechi/Lomi-ha/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.1.1"
 }
