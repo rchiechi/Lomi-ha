@@ -97,7 +97,7 @@ Options (Settings → Devices & services → Lomi → Configure):
 | Poll `/devices/status` | on | One extra request per device per poll. |
 | Poll pending commands | on | Needed for scheduled starts and the *command acknowledged* event. |
 | Realtime device shadow (MQTT) | on | Subscribe to the AWS IoT shadow for live state. Polling keeps running either way. |
-| Shadow auth: token / transport / client ID | Id token / headers / `{user_id}` | How the Cognito token is presented to Lomi's IoT custom authorizer. The defaults mirror the iOS app; the other choices exist for troubleshooting (see *Realtime* below). |
+| Shadow auth: token / transport / client ID / MQTT user name | Id token / headers / `{uuid}` / `SDK=iOS&Version=2.33.10&devices=<serial>` | How the session authenticates with Lomi's IoT custom authorizer. The defaults mirror the iOS app handshake exactly; the authorizer reads the device-ownership claim from the `devices=<serial>` part of the MQTT user name. The other choices exist for troubleshooting (see *Realtime* below). |
 
 ## Example automations
 
@@ -179,12 +179,16 @@ Start an Eco-Express cycle at 23:00 tonight:
   (`$aws/things/lomi-production-<serial>/shadow`). The integration opens an
   MQTT 3.1.1 session over WebSocket to
   `wss://a3m8zk07454hpt-ats.iot.us-east-1.amazonaws.com/mqtt`, authenticating
-  the way the iOS app does: AWS IoT **custom authorizer**
-  `lomi_iot_authorizer_production`, token key `authorization`, token value =
-  the Cognito session token, no token signature. It subscribes to
-  `shadow/update/documents` (+ `update/accepted`, `get/accepted`), publishes an
-  empty `shadow/get` on connect, and only accepts documents whose
-  `serNo` matches the device. `state.reported` carries `currState`,
+  exactly the way the iOS app does: AWS IoT **custom authorizer**
+  `lomi_iot_authorizer_production` with the Cognito Id token in the
+  `authorization` upgrade header (token signing is disabled), and — the part
+  the authorizer actually checks — the MQTT CONNECT user name
+  `SDK=iOS&Version=2.33.10&devices=<serial>`, which carries the
+  device-ownership claim. It subscribes to the classic shadow's
+  `update/documents` and `accepted`/`rejected` topics, publishes
+  `shadow/get` with a client token on connect, and only accepts documents
+  whose `serNo` matches the device. The handshake is verified live against
+  the production broker. `state.reported` carries `currState`,
   `prevState`, `coverOpen`, `paused`, `finished`, `standby`, `recovery`,
   `tRem`, `runTime`, `startDelay`, `progLoc`, `filterState`, `filterCounter`,
   `fwVer`, `stage1..3`, `lastUpdated`. The client is a ~300-line MQTT codec on
@@ -194,19 +198,19 @@ Start an Eco-Express cycle at 23:00 tonight:
 ### Troubleshooting the realtime channel
 
 If the **Realtime connection** sensor stays off, its `last_error` attribute
-says why (for example *Socket closed before CONNACK*, which means the IoT
-authorizer refused the token or client ID). Try the other *Shadow auth*
+says why (for example *CONNACK 5*, which means the IoT authorizer refused
+the token, client ID or MQTT user name). Try the other *Shadow auth*
 choices in the options, one at a time; the integration reloads and reconnects
 on every options change. Enable debug logging for `custom_components.lomi`
 to see the exact connect parameters and every shadow document.
 
 ## Known gaps
 
-* **Realtime channel is new and lightly tested.** The authorizer accepts the
-  WebSocket upgrade unconditionally and only evaluates the token at MQTT
-  CONNECT; if it refuses the connection the *Realtime connection* sensor stays
-  off with the reason in its `last_error` attribute and everything falls back
-  to polling. The unit of **Time remaining** / **Run time** is assumed to be
+* **Realtime channel is lightly tested.** The authorizer evaluates the
+  session at MQTT CONNECT — the `devices=<serial>` part of the MQTT user name
+  is the device-ownership claim; if it refuses the connection the *Realtime
+  connection* sensor stays off with the reason in its `last_error` attribute
+  and everything falls back to polling. The unit of **Time remaining** / **Run time** is assumed to be
   minutes (`SHADOW_DURATION_UNIT` in `sensor.py`).
 * `/devices/status` has only ever been observed as `{}`. If you catch it
   populated, open an issue with the diagnostics download

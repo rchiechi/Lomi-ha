@@ -23,8 +23,15 @@ The defaults below reproduce the app's handshake exactly as aws-sdk-ios
 (AWSIoTMQTTClient, v2.36.1) builds it: plain ``wss://..../mqtt`` URL with the
 authorizer name/token/empty-signature in three HTTP upgrade headers, a single
 ``mqttv3.1`` WebSocket subprotocol, MQTT 3.1.1 CONNECT (``MQTT``/level 4,
-keepalive 300) and no CONNECT user name. The alternatives (token kind, query
-string, MQTT user name, client id) stay configurable through
+keepalive 300) and the MQTT CONNECT **user name**
+``SDK=iOS&Version=2.33.10&devices=<deviceSerial>``. That user name is what
+the custom authorizer actually authenticates from: its Lambda reads the
+device-ownership claim out of ``event.protocolData.mqtt.username`` — the
+``devices=<serial>`` part — not out of any header (verified live by
+replaying the app's captured session end-to-end, HACS.md §10; without the
+user name the broker closes the connection before CONNACK regardless of
+which token or transport carries the JWT). The alternatives (token kind,
+query string, MQTT user name/password, client id) stay configurable through
 :class:`ShadowAuthConfig` for ``tools/shadow_probe.py`` experiments.
 
 This module deliberately has no Home Assistant imports.
@@ -75,6 +82,13 @@ TRANSPORTS = (TRANSPORT_HEADER, TRANSPORT_QUERY, TRANSPORT_USERNAME)
 # {serial} / {thing} (first device).
 DEFAULT_CLIENT_ID = "{uuid}"
 
+# The MQTT CONNECT user name the custom authorizer authenticates from: the
+# legacy aws-sdk-ios metrics string plus the owned device serial (the app
+# seeds it via "updateUserMetaData:" in setupMQTTSession). {serial} expands
+# to the first known device serial; None/"" sends no user name (always
+# denied by the broker).
+DEFAULT_MQTT_USERNAME = "SDK=iOS&Version=2.33.10&devices={serial}"
+
 # --- shadow vocabulary -------------------------------------------------------
 STATE_CONNECT = "CONNECT_STATE"
 STATE_OFF = "OFF_STATE"
@@ -106,8 +120,17 @@ KNOWN_STATES: tuple[str, ...] = (
     STATE_FILTER,
     STATE_ISSUE_FILTER,
 )
-# Lower-case enum values used for the HA sensor (translation keys).
-STATE_OPTIONS: tuple[str, ...] = tuple(s.lower() for s in KNOWN_STATES) + (STATE_UNKNOWN,)
+# The device sends lower-case phase names *without* the "_state" suffix
+# (live shadow: "standby", "stage1"); the STANDBY_STATE-style strings in the
+# binary are enum-case names, not wire values (HACS.md §10). stage1..3 are
+# in-progress cycle phases the device reports in addition to the enum.
+WIRE_STATE_SUFFIX = "_state"
+STATE_OPTIONS: tuple[str, ...] = tuple(s.lower() for s in KNOWN_STATES) + (
+    "stage1_state",
+    "stage2_state",
+    "stage3_state",
+    STATE_UNKNOWN,
+)
 
 # States in which a cycle is in progress (unless ``paused``).
 RUNNING_STATES = frozenset(
@@ -122,6 +145,15 @@ RUNNING_STATES = frozenset(
     }
 )
 IDLE_STATES = frozenset({STATE_CONNECT, STATE_OFF, STATE_STANDBY})
+
+# Lower-case wire forms: enum names minus the suffix, plus the stage phases.
+_KNOWN_WIRE = frozenset(
+    {s[: -len(WIRE_STATE_SUFFIX)].lower() for s in KNOWN_STATES} | {"stage1", "stage2", "stage3"}
+)
+_RUNNING_WIRE = frozenset(
+    {s[: -len(WIRE_STATE_SUFFIX)].lower() for s in RUNNING_STATES} | {"stage1", "stage2", "stage3"}
+)
+_IDLE_WIRE = frozenset(s[: -len(WIRE_STATE_SUFFIX)].lower() for s in IDLE_STATES)
 
 
 def _as_bool(value: Any) -> bool | None:
@@ -149,6 +181,13 @@ def _as_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _as_bool_str(value: Any) -> str | None:
+    """Booleans as the wire spells them ("true"/"false"), else the string."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return _as_str(value)
 
 
 @dataclass(slots=True)
@@ -197,7 +236,7 @@ class LomiShadowState:
             time_remaining=_as_int(reported.get("tRem")),
             run_time=_as_int(reported.get("runTime")),
             cover_open=_as_bool(reported.get("coverOpen")),
-            filter_state=_as_str(reported.get("filterState")),
+            filter_state=_as_bool_str(reported.get("filterState")),
             filter_counter=_as_int(reported.get("filterCounter")),
             finished=_as_bool(reported.get("finished")),
             paused=_as_bool(reported.get("paused")),
@@ -212,40 +251,51 @@ class LomiShadowState:
             raw=dict(reported),
         )
 
+    @staticmethod
+    def _wire_state(value: str | None) -> str | None:
+        """Normalise a wire state to its lower-case phase name, or None."""
+        if not value:
+            return None
+        wire = value.strip().lower()
+        if wire not in _KNOWN_WIRE and wire.endswith(WIRE_STATE_SUFFIX):
+            wire = wire[: -len(WIRE_STATE_SUFFIX)]
+        return wire if wire in _KNOWN_WIRE else None
+
     @property
     def state_option(self) -> str:
-        """Lower-case enum value for the cycle-state sensor."""
-        if self.current_state and self.current_state in KNOWN_STATES:
-            return self.current_state.lower()
-        return STATE_UNKNOWN
+        """Translation key for the cycle-state sensor."""
+        wire = self._wire_state(self.current_state)
+        return f"{wire}{WIRE_STATE_SUFFIX}" if wire else STATE_UNKNOWN
 
     @property
     def previous_state_option(self) -> str:
-        if self.previous_state and self.previous_state in KNOWN_STATES:
-            return self.previous_state.lower()
-        return STATE_UNKNOWN
+        wire = self._wire_state(self.previous_state)
+        return f"{wire}{WIRE_STATE_SUFFIX}" if wire else STATE_UNKNOWN
 
     @property
     def is_running(self) -> bool | None:
         """A cycle is in progress (not paused)."""
-        if self.current_state is None:
+        wire = self._wire_state(self.current_state)
+        if wire is None:
             return None
-        if self.current_state not in RUNNING_STATES:
+        if wire not in _RUNNING_WIRE:
             return False
         return not self.paused
 
     @property
     def is_idle(self) -> bool | None:
-        if self.current_state is None:
+        wire = self._wire_state(self.current_state)
+        if wire is None:
             return None
-        return self.current_state in IDLE_STATES
+        return wire in _IDLE_WIRE
 
     @property
     def is_active(self) -> bool | None:
         """Cycle in progress *or* paused mid-cycle."""
-        if self.current_state is None:
+        wire = self._wire_state(self.current_state)
+        if wire is None:
             return None
-        return self.current_state in RUNNING_STATES
+        return wire in _RUNNING_WIRE
 
     def as_dict(self) -> dict[str, Any]:
         """JSON-friendly view for diagnostics / attributes."""
@@ -305,6 +355,9 @@ class ShadowAuthConfig:
     token_kind: str = TOKEN_ID
     transport: str = TRANSPORT_HEADER
     client_id_template: str = DEFAULT_CLIENT_ID
+    # The authorizer Lambda takes the ownership claim from the CONNECT user
+    # name's "devices=<serial>" part, not from any header (HACS.md §10).
+    mqtt_username_template: str | None = DEFAULT_MQTT_USERNAME
     authorizer: str = IOT_AUTHORIZER
     token_header: str = IOT_TOKEN_HEADER
     subprotocols: tuple[str, ...] = IOT_SUBPROTOCOLS
@@ -346,6 +399,7 @@ class LomiShadowClient:
         self._reported: dict[str, dict[str, Any]] = {}
         self._subscribed: set[str] = set()
         self._client: MqttWebSocketClient | None = None
+        self._active_client_id: str | None = None
         self._task: asyncio.Task[Any] | None = None
         self._stopped = asyncio.Event()
         self._wake = asyncio.Event()
@@ -400,7 +454,9 @@ class LomiShadowClient:
             return
         for thing in [thing_name] if thing_name else list(self._things):
             try:
-                await self._client.publish(f"$aws/things/{thing}/shadow/get", b"")
+                await self._client.publish(
+                    f"$aws/things/{thing}/shadow/get", self._get_payload()
+                )
             except MqttError as err:
                 _LOGGER.debug("shadow get for %s failed: %s", thing, err)
 
@@ -426,7 +482,7 @@ class LomiShadowClient:
 
     def _client_id(self) -> str:
         values = {
-            "uuid": uuid.uuid4().hex,  # UUID().uuidString minus dashes — app-exact
+            "uuid": uuid.uuid4().hex.upper(),  # UUID().uuidString is upper-case
             "user_id": self._identity.get("user_id", ""),
             "sub": self._identity.get("sub", ""),
             "email": self._identity.get("email", ""),
@@ -440,6 +496,16 @@ class LomiShadowClient:
             client_id = self.config.client_id_template
         return client_id or f"lomi-ha-{values['random']}"
 
+    def _mqtt_username(self) -> str | None:
+        """CONNECT user name carrying the devices=<serial> ownership claim."""
+        template = self.config.mqtt_username_template
+        if not template:
+            return None
+        try:
+            return template.format(serial=next(iter(self._things.values()), ""))
+        except (KeyError, IndexError, ValueError):
+            return template
+
     def _build(self, token: str) -> tuple[str, dict[str, str], str | None, str | None]:
         """Return (url, headers, username, password) for the chosen transport."""
         cfg = self.config
@@ -447,14 +513,21 @@ class LomiShadowClient:
         auth_params = {"x-amz-customauthorizer-name": cfg.authorizer, cfg.token_header: token}
         if cfg.include_empty_signature:
             auth_params["x-amz-customauthorizer-signature"] = ""
-        if transport == TRANSPORT_QUERY:
-            return f"{IOT_URL}?{urlencode(auth_params)}", {}, None, None
         if transport == TRANSPORT_USERNAME:
             username = f"?x-amz-customauthorizer-name={cfg.authorizer}"
             if cfg.include_empty_signature:
                 username += "&x-amz-customauthorizer-signature="
             return IOT_URL, {}, username, token
-        return IOT_URL, auth_params, None, None
+        username = self._mqtt_username()
+        if transport == TRANSPORT_QUERY:
+            return f"{IOT_URL}?{urlencode(auth_params)}", {}, username, None
+        return IOT_URL, auth_params, username, None
+
+    def _get_payload(self) -> bytes:
+        """``shadow/get`` request: the clientToken echoes back in the reply."""
+        if not self._active_client_id:
+            return b""
+        return json.dumps({"clientToken": f"{self._active_client_id}-1"}).encode()
 
     # ---- loop ----------------------------------------------------------------
 
@@ -520,11 +593,13 @@ class LomiShadowClient:
         token = await self._async_token()
         url, headers, username, password = self._build(token)
         client_id = self._client_id()
+        self._active_client_id = client_id
         _LOGGER.debug(
-            "Shadow connect: transport=%s token=%s client_id=%s things=%s",
+            "Shadow connect: transport=%s token=%s client_id=%s username=%s things=%s",
             self.config.transport,
             self.config.token_kind,
             client_id,
+            username,
             list(self._things),
         )
         client = MqttWebSocketClient(
@@ -549,23 +624,29 @@ class LomiShadowClient:
         finally:
             if self._client is client:
                 self._client = None
+                self._active_client_id = None
             self._subscribed.clear()
 
     async def _async_subscribe(self, client: MqttWebSocketClient, things: list[str]) -> None:
         for thing in things:
             base = f"$aws/things/{thing}/shadow"
+            # The app's exact subscription set (HACS.md §10): the documents
+            # stream plus every classic-shadow accepted/rejected topic, QoS 0.
             topics = [
                 (f"{base}/update/documents", 0),
                 (f"{base}/update/accepted", 0),
+                (f"{base}/update/rejected", 0),
                 (f"{base}/get/accepted", 0),
                 (f"{base}/get/rejected", 0),
+                (f"{base}/delete/accepted", 0),
+                (f"{base}/delete/rejected", 0),
             ]
             granted = await client.subscribe(topics)
             failed = [t for (t, _), g in zip(topics, granted, strict=False) if g == 0x80]
             if failed:
                 _LOGGER.warning("Shadow subscribe refused for %s", failed)
             self._subscribed.add(thing)
-            await client.publish(f"{base}/get", b"")
+            await client.publish(f"{base}/get", self._get_payload())
             _LOGGER.debug("Subscribed to shadow of %s (granted %s)", thing, granted)
 
     # ---- inbound ----------------------------------------------------------

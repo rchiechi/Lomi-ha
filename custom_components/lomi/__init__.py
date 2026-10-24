@@ -16,11 +16,13 @@ from .const import (
     CONF_ENABLE_SHADOW,
     CONF_REFRESH_TOKEN,
     CONF_SHADOW_CLIENT_ID,
+    CONF_SHADOW_MQTT_USERNAME,
     CONF_SHADOW_TOKEN,
     CONF_SHADOW_TRANSPORT,
     CONF_USER_ID,
     DEFAULT_ENABLE_SHADOW,
     DEFAULT_SHADOW_CLIENT_ID,
+    DEFAULT_SHADOW_MQTT_USERNAME,
     DEFAULT_SHADOW_TOKEN,
     DEFAULT_SHADOW_TRANSPORT,
     DOMAIN,
@@ -105,6 +107,10 @@ def _async_start_shadow(
         transport=options.get(CONF_SHADOW_TRANSPORT, DEFAULT_SHADOW_TRANSPORT),
         client_id_template=options.get(CONF_SHADOW_CLIENT_ID, DEFAULT_SHADOW_CLIENT_ID)
         or DEFAULT_SHADOW_CLIENT_ID,
+        mqtt_username_template=options.get(
+            CONF_SHADOW_MQTT_USERNAME, DEFAULT_SHADOW_MQTT_USERNAME
+        )
+        or None,
     )
     claims = auth.tokens.claims if auth.tokens else {}
     shadow = LomiShadowClient(

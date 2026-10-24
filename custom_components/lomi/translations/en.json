@@ -49,7 +49,8 @@
           "enable_shadow": "Realtime device shadow (MQTT)",
           "shadow_token": "Shadow auth: token",
           "shadow_transport": "Shadow auth: transport",
-          "shadow_client_id": "Shadow auth: MQTT client ID"
+          "shadow_client_id": "Shadow auth: MQTT client ID",
+          "shadow_mqtt_username": "Shadow auth: MQTT user name"
         },
         "data_description": {
           "poll_interval": "How often to fetch the device record from the Lomi cloud.",
@@ -58,7 +59,8 @@
           "enable_shadow": "Subscribe to the AWS IoT device shadow for live state (lid, running, cycle phase, time remaining). Falls back to polling when off or unreachable.",
           "shadow_token": "Which Cognito token to present to the IoT custom authorizer. The app uses the plain Id token.",
           "shadow_transport": "Where the token goes: WebSocket upgrade headers (what the app does), the URL query string, or the MQTT user name / password.",
-          "shadow_client_id": "Template for the MQTT client ID. Placeholders: {user_id}, {sub}, {email}, {random}, {serial}, {thing}."
+          "shadow_client_id": "Template for the MQTT client ID. Placeholders: {user_id}, {sub}, {email}, {random}, {serial}, {thing}.",
+          "shadow_mqtt_username": "MQTT CONNECT user name. The custom authorizer reads the device-ownership claim from its devices=<serial> part; {serial} is filled in automatically. Clear it only for experiments."
         }
       }
     }
@@ -124,6 +126,9 @@
           "recovery_state": "Recovery",
           "filter_state": "Filter",
           "issue_filter_state": "Filter issue",
+          "stage1_state": "Stage 1",
+          "stage2_state": "Stage 2",
+          "stage3_state": "Stage 3",
           "unknown": "Unknown"
         }
       },
@@ -143,6 +148,9 @@
           "recovery_state": "Recovery",
           "filter_state": "Filter",
           "issue_filter_state": "Filter issue",
+          "stage1_state": "Stage 1",
+          "stage2_state": "Stage 2",
+          "stage3_state": "Stage 3",
           "unknown": "Unknown"
         }
       },

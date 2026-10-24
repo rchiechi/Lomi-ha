@@ -65,6 +65,7 @@ async def async_get_config_entry_diagnostics(
                 "token_kind": shadow.config.token_kind if shadow else None,
                 "transport": shadow.config.transport if shadow else None,
                 "client_id_template": shadow.config.client_id_template if shadow else None,
+                "mqtt_username_template": shadow.config.mqtt_username_template if shadow else None,
                 "messages": shadow.message_count if shadow else 0,
                 "last_connected_at": shadow.last_connected_at.isoformat()
                 if shadow and shadow.last_connected_at

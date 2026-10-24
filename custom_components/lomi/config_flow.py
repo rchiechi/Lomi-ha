@@ -34,6 +34,7 @@ from .const import (
     CONF_POLL_STATUS,
     CONF_REFRESH_TOKEN,
     CONF_SHADOW_CLIENT_ID,
+    CONF_SHADOW_MQTT_USERNAME,
     CONF_SHADOW_TOKEN,
     CONF_SHADOW_TRANSPORT,
     CONF_USER_ID,
@@ -42,6 +43,7 @@ from .const import (
     DEFAULT_POLL_PENDING,
     DEFAULT_POLL_STATUS,
     DEFAULT_SHADOW_CLIENT_ID,
+    DEFAULT_SHADOW_MQTT_USERNAME,
     DEFAULT_SHADOW_TOKEN,
     DEFAULT_SHADOW_TRANSPORT,
     DOMAIN,
@@ -275,6 +277,12 @@ class LomiOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_SHADOW_CLIENT_ID,
                     default=options.get(CONF_SHADOW_CLIENT_ID, DEFAULT_SHADOW_CLIENT_ID),
+                ): selector.TextSelector(),
+                vol.Required(
+                    CONF_SHADOW_MQTT_USERNAME,
+                    default=options.get(
+                        CONF_SHADOW_MQTT_USERNAME, DEFAULT_SHADOW_MQTT_USERNAME
+                    ),
                 ): selector.TextSelector(),
             }
         )
