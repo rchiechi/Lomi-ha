@@ -19,10 +19,13 @@ Recovered from the iOS app (v3.3.0):
   tRem runTime coverOpen filterState filterCounter finished paused recovery
   stage1 stage2 stage3 standby lastUpdated``
 
-Exactly how the authorizer wants the token delivered (header vs query string
-vs MQTT user name, Id vs Access token, client id) is configurable through
-:class:`ShadowAuthConfig` so it can be tuned from the options flow or the
-``tools/shadow_probe.py`` script without code changes.
+The defaults below reproduce the app's handshake exactly as aws-sdk-ios
+(AWSIoTMQTTClient, v2.36.1) builds it: plain ``wss://..../mqtt`` URL with the
+authorizer name/token/empty-signature in three HTTP upgrade headers, a single
+``mqttv3.1`` WebSocket subprotocol, MQTT 3.1.1 CONNECT (``MQTT``/level 4,
+keepalive 300) and no CONNECT user name. The alternatives (token kind, query
+string, MQTT user name, client id) stay configurable through
+:class:`ShadowAuthConfig` for ``tools/shadow_probe.py`` experiments.
 
 This module deliberately has no Home Assistant imports.
 """
@@ -36,6 +39,7 @@ from datetime import UTC, datetime
 import json
 import logging
 import secrets
+import uuid
 from typing import Any
 from urllib.parse import urlencode
 
@@ -50,7 +54,9 @@ IOT_HOST = "a3m8zk07454hpt-ats.iot.us-east-1.amazonaws.com"
 IOT_URL = f"wss://{IOT_HOST}/mqtt"
 IOT_AUTHORIZER = "lomi_iot_authorizer_production"
 IOT_TOKEN_HEADER = "authorization"
-IOT_SUBPROTOCOLS: tuple[str, ...] = ("mqtt", "mqttv3.1")
+# aws-sdk-ios opens the WebSocket with exactly one subprotocol ("mqttv3.1");
+# offering "mqtt" as well changes the handshake and AWS IoT refuses it.
+IOT_SUBPROTOCOLS: tuple[str, ...] = ("mqttv3.1",)
 
 # --- how to hand the token to the custom authorizer -------------------------
 TOKEN_ID = "id_token"
@@ -64,9 +70,10 @@ TRANSPORT_QUERY = "query"  # ?x-amz-customauthorizer-name=..&authorization=..
 TRANSPORT_USERNAME = "username"  # MQTT CONNECT user name / password
 TRANSPORTS = (TRANSPORT_HEADER, TRANSPORT_QUERY, TRANSPORT_USERNAME)
 
-# Placeholders: {user_id} (Lomi Mongo id), {sub} (Cognito sub), {email},
-# {random} (12 hex chars), {serial} / {thing} (first device).
-DEFAULT_CLIENT_ID = "{user_id}"
+# Placeholders: {uuid} (random 32-hex, the app's exact clientId shape), {user_id}
+# (Lomi Mongo id), {sub} (Cognito sub), {email}, {random} (12 hex chars),
+# {serial} / {thing} (first device).
+DEFAULT_CLIENT_ID = "{uuid}"
 
 # --- shadow vocabulary -------------------------------------------------------
 STATE_CONNECT = "CONNECT_STATE"
@@ -301,8 +308,10 @@ class ShadowAuthConfig:
     authorizer: str = IOT_AUTHORIZER
     token_header: str = IOT_TOKEN_HEADER
     subprotocols: tuple[str, ...] = IOT_SUBPROTOCOLS
-    include_empty_signature: bool = False
-    keepalive: int = 60
+    # AWSIoTMQTTClient adds the signature header unconditionally, even when
+    # token signing is disabled and the value is the empty string.
+    include_empty_signature: bool = True
+    keepalive: int = 300  # AWSIoTSDK keepalive default
 
 
 StateCallback = Callable[[str, LomiShadowState, str], None]
@@ -417,6 +426,7 @@ class LomiShadowClient:
 
     def _client_id(self) -> str:
         values = {
+            "uuid": uuid.uuid4().hex,  # UUID().uuidString minus dashes — app-exact
             "user_id": self._identity.get("user_id", ""),
             "sub": self._identity.get("sub", ""),
             "email": self._identity.get("email", ""),

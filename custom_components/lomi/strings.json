@@ -58,7 +58,7 @@
           "enable_shadow": "Subscribe to the AWS IoT device shadow for live state (lid, running, cycle phase, time remaining). Falls back to polling when off or unreachable.",
           "shadow_token": "Which Cognito token to present to the IoT custom authorizer. The app uses the plain Id token.",
           "shadow_transport": "Where the token goes: WebSocket upgrade headers (what the app does), the URL query string, or the MQTT user name / password.",
-          "shadow_client_id": "Template for the MQTT client ID. Placeholders: {user_id}, {sub}, {email}, {random}, {serial}, {thing}."
+          "shadow_client_id": "Template for the MQTT client ID. Placeholders: {uuid}, {user_id}, {sub}, {email}, {random}, {serial}, {thing}."
         }
       }
     }
