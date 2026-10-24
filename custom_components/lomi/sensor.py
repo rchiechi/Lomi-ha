@@ -13,7 +13,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import EntityCategory
+from homeassistant.const import EntityCategory, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
@@ -21,6 +21,11 @@ from homeassistant.helpers.typing import StateType
 from .api import COMMANDS, MODE_NAMES
 from .coordinator import LomiConfigEntry, LomiCoordinator, LomiDeviceData
 from .entity import LomiEntity, async_setup_device_entities
+from .shadow import STATE_OPTIONS
+
+# Unit of ``tRem`` / ``runTime`` in the shadow. The app shows remaining time in
+# minutes; flip this if a live capture proves otherwise.
+SHADOW_DURATION_UNIT = UnitOfTime.MINUTES
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -65,6 +70,43 @@ def _last_command_attrs(data: LomiDeviceData) -> dict[str, Any]:
         "scheduled": cmd.get("scheduledStart"),
         "issue_at": cmd.get("issueAt"),
         "created_at": cmd.get("createdAt"),
+    }
+
+
+def _shadow_value(attr: str) -> Callable[[LomiDeviceData], StateType | datetime]:
+    def _get(data: LomiDeviceData) -> StateType | datetime:
+        if data.shadow is None:
+            return None
+        return getattr(data.shadow, attr)
+
+    return _get
+
+
+def _cycle_state(data: LomiDeviceData) -> StateType:
+    return data.shadow.state_option if data.shadow else None
+
+
+def _previous_state(data: LomiDeviceData) -> StateType:
+    return data.shadow.previous_state_option if data.shadow else None
+
+
+def _cycle_attrs(data: LomiDeviceData) -> dict[str, Any]:
+    if data.shadow is None:
+        return {}
+    sh = data.shadow
+    return {
+        "raw_state": sh.current_state,
+        "raw_previous_state": sh.previous_state,
+        "stage1": sh.stage1,
+        "stage2": sh.stage2,
+        "stage3": sh.stage3,
+        "program_location": sh.program_location,
+        "paused": sh.paused,
+        "finished": sh.finished,
+        "standby": sh.standby,
+        "recovery": sh.recovery,
+        "shadow_version": sh.version,
+        "received_at": sh.received_at.isoformat(),
     }
 
 
@@ -153,6 +195,99 @@ SENSORS: tuple[LomiSensorDescription, ...] = (
         device_class=SensorDeviceClass.TIMESTAMP,
         icon="mdi:clock-start",
         value_fn=lambda d: d.next_scheduled_start,
+    ),
+    # ---- realtime (device shadow) ----------------------------------------
+    LomiSensorDescription(
+        key="cycle_state",
+        translation_key="cycle_state",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(STATE_OPTIONS),
+        icon="mdi:state-machine",
+        value_fn=_cycle_state,
+        attrs_fn=_cycle_attrs,
+    ),
+    LomiSensorDescription(
+        key="previous_cycle_state",
+        translation_key="previous_cycle_state",
+        device_class=SensorDeviceClass.ENUM,
+        options=list(STATE_OPTIONS),
+        icon="mdi:history",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=_previous_state,
+    ),
+    LomiSensorDescription(
+        key="time_remaining",
+        translation_key="time_remaining",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=SHADOW_DURATION_UNIT,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:timer-sand",
+        value_fn=_shadow_value("time_remaining"),
+    ),
+    LomiSensorDescription(
+        key="run_time",
+        translation_key="run_time",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=SHADOW_DURATION_UNIT,
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:timer-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_shadow_value("run_time"),
+    ),
+    LomiSensorDescription(
+        key="start_delay",
+        translation_key="start_delay",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.HOURS,
+        icon="mdi:timer-play-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_shadow_value("start_delay"),
+    ),
+    LomiSensorDescription(
+        key="filter_state",
+        translation_key="filter_state",
+        icon="mdi:air-filter",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_shadow_value("filter_state"),
+    ),
+    LomiSensorDescription(
+        key="shadow_filter_counter",
+        translation_key="shadow_filter_counter",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:air-filter",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=_shadow_value("filter_counter"),
+    ),
+    LomiSensorDescription(
+        key="firmware_version",
+        translation_key="firmware_version",
+        icon="mdi:chip",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_shadow_value("firmware"),
+    ),
+    LomiSensorDescription(
+        key="program_location",
+        translation_key="program_location",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=_shadow_value("program_location"),
+    ),
+    LomiSensorDescription(
+        key="shadow_updated",
+        translation_key="shadow_updated",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=_shadow_value("received_at"),
+    ),
+    LomiSensorDescription(
+        key="device_reported_at",
+        translation_key="device_reported_at",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=_shadow_value("last_updated"),
     ),
     LomiSensorDescription(
         key="device_type",

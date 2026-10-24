@@ -1,4 +1,4 @@
-"""The Lomi integration (cloud polling via api.lomi-app.net)."""
+"""The Lomi integration: REST polling (api.lomi-app.net) + AWS IoT shadow push."""
 
 from __future__ import annotations
 
@@ -12,9 +12,22 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
 from .api import LomiAuth, LomiAuthError, LomiClient, LomiError, LomiTokens
-from .const import CONF_REFRESH_TOKEN, DOMAIN
+from .const import (
+    CONF_ENABLE_SHADOW,
+    CONF_REFRESH_TOKEN,
+    CONF_SHADOW_CLIENT_ID,
+    CONF_SHADOW_TOKEN,
+    CONF_SHADOW_TRANSPORT,
+    CONF_USER_ID,
+    DEFAULT_ENABLE_SHADOW,
+    DEFAULT_SHADOW_CLIENT_ID,
+    DEFAULT_SHADOW_TOKEN,
+    DEFAULT_SHADOW_TRANSPORT,
+    DOMAIN,
+)
 from .coordinator import LomiConfigEntry, LomiCoordinator
 from .services import async_setup_services
+from .shadow import LomiShadowClient, ShadowAuthConfig
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,9 +82,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: LomiConfigEntry) -> bool
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
+    if entry.options.get(CONF_ENABLE_SHADOW, DEFAULT_ENABLE_SHADOW):
+        _async_start_shadow(hass, entry, session, auth, coordinator)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
+
+
+@callback
+def _async_start_shadow(
+    hass: HomeAssistant,
+    entry: LomiConfigEntry,
+    session,
+    auth: LomiAuth,
+    coordinator: LomiCoordinator,
+) -> None:
+    """Start the realtime shadow client (MQTT over WebSocket)."""
+    options = entry.options
+    config = ShadowAuthConfig(
+        token_kind=options.get(CONF_SHADOW_TOKEN, DEFAULT_SHADOW_TOKEN),
+        transport=options.get(CONF_SHADOW_TRANSPORT, DEFAULT_SHADOW_TRANSPORT),
+        client_id_template=options.get(CONF_SHADOW_CLIENT_ID, DEFAULT_SHADOW_CLIENT_ID)
+        or DEFAULT_SHADOW_CLIENT_ID,
+    )
+    claims = auth.tokens.claims if auth.tokens else {}
+    shadow = LomiShadowClient(
+        session,
+        auth,
+        config=config,
+        identity={
+            "user_id": str(entry.data.get(CONF_USER_ID) or claims.get("custom:user_id") or ""),
+            "sub": str(claims.get("sub") or ""),
+            "email": str(entry.data.get(CONF_EMAIL) or ""),
+        },
+        on_state=coordinator.async_handle_shadow,
+        on_connection=coordinator.async_set_shadow_connection,
+        create_task=lambda coro, name: entry.async_create_background_task(hass, coro, name),
+    )
+    coordinator.attach_shadow(shadow)
+    shadow.start()
+    entry.async_on_unload(shadow.async_stop)
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: LomiConfigEntry) -> None:

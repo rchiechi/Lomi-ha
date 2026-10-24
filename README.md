@@ -4,8 +4,10 @@
 
 Unofficial [HACS](https://hacs.xyz) integration for the **Lomi** countertop
 composter (Classic, Bloom and Lomi 3 "Sprout"). It talks to the same cloud API
-the official app uses (`api.lomi-app.net` behind AWS Cognito), so it works
-with any Lomi that is registered in the Lomi app. No local access is
+the official app uses (`api.lomi-app.net` behind AWS Cognito) for commands
+and account data, and subscribes to the same **AWS IoT device shadow** the app
+uses for live state (lid open, running / idle, cycle phase, time remaining).
+It works with any Lomi that is registered in the Lomi app. No local access is
 possible: the device only speaks to AWS IoT.
 
 Everything here was reverse-engineered from app captures and verified against
@@ -21,6 +23,11 @@ production with a Lomi 3. Not affiliated with Pela / Lomi.
 | sensor | **Filter counter** | `lastFilterCounter`; counts up once per cycle. |
 | sensor | **Last filter reset** | `lastFilterResetDate`. |
 | sensor | **Next scheduled start**, **Pending commands** | From the pending-command queue. |
+| sensor | **Cycle state** | Live, from the device shadow (`currState`): Standby, Grow, Eco-Express, Lomi Approved, Mixing, Drying, Cooling, Cleaning, Recovery, Filter … Stage details, pause / finished flags and the raw value are attributes. |
+| sensor | **Time remaining**, **Run time**, **Start delay** | Live, from the shadow (`tRem`, `runTime`, `startDelay`). |
+| sensor | **Firmware version**, **Filter state**, **Last shadow update** | Live, diagnostic. Firmware is also written to the device registry. |
+| binary_sensor | **Lid**, **Running**, **Paused**, **Cycle finished** | Live, from the shadow (`coverOpen`, `currState` + `paused`, `finished`). |
+| binary_sensor | **Standby**, **Power-loss recovery**, **Realtime connection** | Live, diagnostic. The connection sensor exposes the last MQTT error as an attribute. |
 | sensor | **Status** | From `/devices/status`. Empty while idle; raw payload is exposed as the `raw` attribute. |
 | sensor | **Last command**, **Last cloud update**, **Record version**, **Filter counter updated** | Diagnostic. |
 | sensor | **Device type**, **IoT thing name**, **Manufacture date** | Diagnostic, disabled by default. |
@@ -39,6 +46,11 @@ The **Activity** event entity (and the `lomi_event` bus event) fire on:
 | `status_changed` | `/devices/status` payload changed. |
 | `command_issued` | A command was sent from Home Assistant. |
 | `command_acknowledged` | A pending/scheduled command left the pending queue (device acked it). |
+| `cycle_started` / `cycle_finished` | Live: the shadow moved into / out of a running state. |
+| `cycle_state_changed` | Live: `currState` changed (`state`, `previous_state`, `time_remaining` in the payload). |
+| `cycle_paused` / `cycle_resumed` | Live: `paused` flipped. |
+| `lid_opened` / `lid_closed` | Live: `coverOpen` flipped. |
+| `shadow_updated` | Bus event only (not on the event entity): every shadow document, with all parsed fields. |
 
 Every event carries `serial`, `nickname` and `user_device_id`, plus
 type-specific fields (`old_counter`/`new_counter`, `old_version`/`new_version`,
@@ -84,23 +96,49 @@ Options (Settings → Devices & services → Lomi → Configure):
 | Poll interval | 60 s | `GET /userDevices` cadence. The device pushes to the cloud, so 30–60 s is plenty. |
 | Poll `/devices/status` | on | One extra request per device per poll. |
 | Poll pending commands | on | Needed for scheduled starts and the *command acknowledged* event. |
+| Realtime device shadow (MQTT) | on | Subscribe to the AWS IoT shadow for live state. Polling keeps running either way. |
+| Shadow auth: token / transport / client ID | Id token / headers / `{user_id}` | How the Cognito token is presented to Lomi's IoT custom authorizer. The defaults mirror the iOS app; the other choices exist for troubleshooting (see *Realtime* below). |
 
 ## Example automations
 
-Notify when a cycle finishes:
+Notify when a cycle finishes (live, from the shadow):
 
 ```yaml
 automation:
   - alias: "Lomi cycle finished"
     triggers:
       - trigger: state
-        entity_id: event.sprout_activity
-        attribute: event_type
-        to: filter_counter_changed
+        entity_id: binary_sensor.sprout_running
+        from: "on"
+        to: "off"
     actions:
       - action: notify.mobile_app_phone
         data:
           message: "Lomi is done – empty the bucket."
+```
+
+Nag when the lid is left open while idle:
+
+```yaml
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.sprout_lid
+        to: "on"
+        for: "00:10:00"
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.sprout_running
+        state: "off"
+```
+
+Polling-only fallback (works without the realtime channel):
+
+```yaml
+    triggers:
+      - trigger: state
+        entity_id: event.sprout_activity
+        attribute: event_type
+        to: filter_counter_changed
 ```
 
 Or with the bus event (works without the event entity):
@@ -137,22 +175,52 @@ Start an Eco-Express cycle at 23:00 tonight:
   `{"command": "start", "value": <mode>, "userDeviceId": ...}`; add a future
   `issueAt` for a scheduled start, `DELETE /remoteCommands?_id=` to cancel.
   Commands are fire-and-forget; the backend relays them to the device.
+* **Realtime**: the device keeps an AWS IoT *classic* device shadow
+  (`$aws/things/lomi-production-<serial>/shadow`). The integration opens an
+  MQTT 3.1.1 session over WebSocket to
+  `wss://a3m8zk07454hpt-ats.iot.us-east-1.amazonaws.com/mqtt`, authenticating
+  the way the iOS app does: AWS IoT **custom authorizer**
+  `lomi_iot_authorizer_production`, token key `authorization`, token value =
+  the Cognito session token, no token signature. It subscribes to
+  `shadow/update/documents` (+ `update/accepted`, `get/accepted`), publishes an
+  empty `shadow/get` on connect, and only accepts documents whose
+  `serNo` matches the device. `state.reported` carries `currState`,
+  `prevState`, `coverOpen`, `paused`, `finished`, `standby`, `recovery`,
+  `tRem`, `runTime`, `startDelay`, `progLoc`, `filterState`, `filterCounter`,
+  `fwVer`, `stage1..3`, `lastUpdated`. The client is a ~300-line MQTT codec on
+  Home Assistant's `aiohttp` session, so there are still no extra
+  requirements. It reconnects with backoff and re-mints the token each time.
+
+### Troubleshooting the realtime channel
+
+If the **Realtime connection** sensor stays off, its `last_error` attribute
+says why (for example *Socket closed before CONNACK*, which means the IoT
+authorizer refused the token or client ID). Try the other *Shadow auth*
+choices in the options, one at a time; the integration reloads and reconnects
+on every options change. Enable debug logging for `custom_components.lomi`
+to see the exact connect parameters and every shadow document.
 
 ## Known gaps
 
-* **Cycle progress / remaining time** is not available: the cloud record does
-  not carry it and the populated shape of `/devices/status` has not been
-  captured. If you catch one, open an issue with the diagnostics download
+* **Realtime channel is new and lightly tested.** The authorizer accepts the
+  WebSocket upgrade unconditionally and only evaluates the token at MQTT
+  CONNECT; if it refuses the connection the *Realtime connection* sensor stays
+  off with the reason in its `last_error` attribute and everything falls back
+  to polling. The unit of **Time remaining** / **Run time** is assumed to be
+  minutes (`SHADOW_DURATION_UNIT` in `sensor.py`).
+* `/devices/status` has only ever been observed as `{}`. If you catch it
+  populated, open an issue with the diagnostics download
   (Settings → Devices & services → Lomi → ⋮ → Download diagnostics; it is
   redacted).
 * **Filter reset** ("Set filter change date" in the app) uses an unknown
   route, so there is no reset button yet.
-* **Realtime** (MQTT over AWS IoT) needs a backend-issued authoriser token the
-  app obtains through an unknown route; polling is used instead.
 * `resume` is sent exactly like the other commands but has not been observed
   in an app capture.
 
 ## Development notes
 
 The integration has no external requirements; it uses Home Assistant's shared
-`aiohttp` session. Minimum Home Assistant version is 2025.3.
+`aiohttp` session for REST and for the MQTT-over-WebSocket shadow client
+(`mqtt.py` is a minimal MQTT 3.1.1 codec, `shadow.py` the session manager and
+document parser; neither imports Home Assistant). Minimum Home Assistant
+version is 2025.3.

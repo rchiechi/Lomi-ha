@@ -28,17 +28,27 @@ from .api import (
     LomiError,
 )
 from .const import (
+    CONF_ENABLE_SHADOW,
     CONF_POLL_INTERVAL,
     CONF_POLL_PENDING,
     CONF_POLL_STATUS,
     CONF_REFRESH_TOKEN,
+    CONF_SHADOW_CLIENT_ID,
+    CONF_SHADOW_TOKEN,
+    CONF_SHADOW_TRANSPORT,
     CONF_USER_ID,
+    DEFAULT_ENABLE_SHADOW,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_POLL_PENDING,
     DEFAULT_POLL_STATUS,
+    DEFAULT_SHADOW_CLIENT_ID,
+    DEFAULT_SHADOW_TOKEN,
+    DEFAULT_SHADOW_TRANSPORT,
     DOMAIN,
     MAX_POLL_INTERVAL,
     MIN_POLL_INTERVAL,
+    SHADOW_TOKEN_OPTIONS,
+    SHADOW_TRANSPORT_OPTIONS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -238,6 +248,34 @@ class LomiOptionsFlow(OptionsFlow):
                     CONF_POLL_PENDING,
                     default=options.get(CONF_POLL_PENDING, DEFAULT_POLL_PENDING),
                 ): selector.BooleanSelector(),
+                vol.Required(
+                    CONF_ENABLE_SHADOW,
+                    default=options.get(CONF_ENABLE_SHADOW, DEFAULT_ENABLE_SHADOW),
+                ): selector.BooleanSelector(),
+                vol.Required(
+                    CONF_SHADOW_TOKEN,
+                    default=options.get(CONF_SHADOW_TOKEN, DEFAULT_SHADOW_TOKEN),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=SHADOW_TOKEN_OPTIONS,
+                        translation_key="shadow_token",
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
+                    CONF_SHADOW_TRANSPORT,
+                    default=options.get(CONF_SHADOW_TRANSPORT, DEFAULT_SHADOW_TRANSPORT),
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=SHADOW_TRANSPORT_OPTIONS,
+                        translation_key="shadow_transport",
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
+                    CONF_SHADOW_CLIENT_ID,
+                    default=options.get(CONF_SHADOW_CLIENT_ID, DEFAULT_SHADOW_CLIENT_ID),
+                ): selector.TextSelector(),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

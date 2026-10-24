@@ -1,4 +1,4 @@
-"""Polling coordinator for the Lomi cloud."""
+"""Coordinator for the Lomi cloud: REST polling plus device-shadow push."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -42,11 +43,20 @@ from .const import (
     EVENT_LOMI,
     EVENT_TYPE_COMMAND_ACKED,
     EVENT_TYPE_COMMAND_ISSUED,
+    EVENT_TYPE_CYCLE_FINISHED,
+    EVENT_TYPE_CYCLE_PAUSED,
+    EVENT_TYPE_CYCLE_RESUMED,
+    EVENT_TYPE_CYCLE_STARTED,
+    EVENT_TYPE_CYCLE_STATE_CHANGED,
     EVENT_TYPE_FILTER_COUNTER,
     EVENT_TYPE_FILTER_RESET,
+    EVENT_TYPE_LID_CLOSED,
+    EVENT_TYPE_LID_OPENED,
     EVENT_TYPE_RECORD_UPDATED,
+    EVENT_TYPE_SHADOW_UPDATED,
     EVENT_TYPE_STATUS_CHANGED,
 )
+from .shadow import LomiShadowClient, LomiShadowState
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,6 +75,7 @@ class LomiDeviceData:
     last_command: dict[str, Any] | None = None
     selected_mode: str = DEFAULT_MODE
     last_seen: datetime | None = None
+    shadow: LomiShadowState | None = None
 
     @property
     def scheduled_starts(self) -> list[dict[str, Any]]:
@@ -105,6 +116,10 @@ class LomiCoordinator(DataUpdateCoordinator[dict[str, LomiDeviceData]]):
         # token rotation written to entry.data.
         self.options_snapshot: dict[str, Any] = dict(options)
         self._event_listeners: list[EventCallback] = []
+        # Realtime channel (AWS IoT device shadow); attached by __init__.
+        self.shadow: LomiShadowClient | None = None
+        self.shadow_connected = False
+        self.shadow_error: str | None = None
 
     # ---- event plumbing ------------------------------------------------------
 
@@ -152,6 +167,7 @@ class LomiCoordinator(DataUpdateCoordinator[dict[str, LomiDeviceData]]):
                 last_command=old.last_command if old else None,
                 selected_mode=old.selected_mode if old else DEFAULT_MODE,
                 last_seen=old.last_seen if old else None,
+                shadow=old.shadow if old else None,
             )
             result[device.user_device_id] = data
 
@@ -162,7 +178,17 @@ class LomiCoordinator(DataUpdateCoordinator[dict[str, LomiDeviceData]]):
 
         for uid, data in result.items():
             self._detect_changes(previous.get(uid), data)
+        if self.shadow is not None:
+            self.shadow.set_things(self._thing_map(result))
         return result
+
+    @staticmethod
+    def _thing_map(result: dict[str, LomiDeviceData]) -> dict[str, str]:
+        return {
+            d.device.thing_name: d.device.serial
+            for d in result.values()
+            if d.device.thing_name
+        }
 
     async def _async_poll_extras(self, result: dict[str, LomiDeviceData]) -> None:
         """Fetch /devices/status and pending commands; failures are non-fatal."""
@@ -263,6 +289,93 @@ class LomiCoordinator(DataUpdateCoordinator[dict[str, LomiDeviceData]]):
             if data.device.serial == serial:
                 return data
         return None
+
+    def find_by_thing(self, thing_name: str) -> LomiDeviceData | None:
+        """Lookup by AWS IoT thing name (falls back to the serial suffix)."""
+        for data in (self.data or {}).values():
+            if data.device.thing_name == thing_name:
+                return data
+        for data in (self.data or {}).values():
+            if data.device.serial and thing_name.endswith(data.device.serial):
+                return data
+        return None
+
+    # ---- realtime shadow -------------------------------------------------------
+
+    @callback
+    def attach_shadow(self, shadow: LomiShadowClient) -> None:
+        """Bind the shadow client and hand it the current things."""
+        self.shadow = shadow
+        shadow.set_things(self._thing_map(self.data or {}))
+
+    @callback
+    def async_set_shadow_connection(self, connected: bool, error: str | None) -> None:
+        """Connection state callback from the shadow client."""
+        self.shadow_connected = connected
+        self.shadow_error = error
+        self.async_update_listeners()
+
+    @callback
+    def async_handle_shadow(self, thing_name: str, state: LomiShadowState, source: str) -> None:
+        """A shadow document arrived: store it and emit change events."""
+        data = self.find_by_thing(thing_name)
+        if data is None:
+            _LOGGER.debug("Shadow for unknown thing %s ignored", thing_name)
+            return
+        old = data.shadow
+        data.shadow = state
+        if state.firmware and (old is None or old.firmware != state.firmware):
+            self._update_firmware(data, state.firmware)
+        self.hass.bus.async_fire(
+            EVENT_LOMI,
+            {
+                "type": EVENT_TYPE_SHADOW_UPDATED,
+                ATTR_SERIAL: data.device.serial,
+                ATTR_NICKNAME: data.device.nickname,
+                ATTR_USER_DEVICE_ID: data.device.user_device_id,
+                "source": source,
+                **state.as_dict(),
+            },
+        )
+        if old is not None:
+            self._detect_shadow_changes(data, old, state)
+        self.async_update_listeners()
+
+    @callback
+    def _update_firmware(self, data: LomiDeviceData, firmware: str) -> None:
+        registry = dr.async_get(self.hass)
+        device = registry.async_get_device(identifiers={(DOMAIN, data.device.serial)})
+        if device is not None and device.sw_version != firmware:
+            registry.async_update_device(device.id, sw_version=firmware)
+
+    @callback
+    def _detect_shadow_changes(
+        self, data: LomiDeviceData, old: LomiShadowState, new: LomiShadowState
+    ) -> None:
+        base = {
+            "state": new.current_state,
+            "previous_state": old.current_state,
+            "time_remaining": new.time_remaining,
+            "run_time": new.run_time,
+        }
+        if new.current_state != old.current_state:
+            self._fire(data, EVENT_TYPE_CYCLE_STATE_CHANGED, base)
+        if old.cover_open is not None and new.cover_open is not None and new.cover_open != old.cover_open:
+            self._fire(data, EVENT_TYPE_LID_OPENED if new.cover_open else EVENT_TYPE_LID_CLOSED, base)
+        was_active, is_active = old.is_active, new.is_active
+        if is_active and not was_active:
+            self._fire(data, EVENT_TYPE_CYCLE_STARTED, base)
+        elif was_active and not is_active:
+            self._fire(data, EVENT_TYPE_CYCLE_FINISHED, {**base, "finished": new.finished})
+        elif (
+            old.finished is not None
+            and new.finished
+            and not old.finished
+            and not is_active
+        ):
+            self._fire(data, EVENT_TYPE_CYCLE_FINISHED, {**base, "finished": True})
+        if old.paused is not None and new.paused is not None and new.paused != old.paused:
+            self._fire(data, EVENT_TYPE_CYCLE_PAUSED if new.paused else EVENT_TYPE_CYCLE_RESUMED, base)
 
     @callback
     def set_selected_mode(self, user_device_id: str, mode: str) -> None:

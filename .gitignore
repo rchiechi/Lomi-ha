@@ -22,3 +22,6 @@ HACS.md
 lomi-mqtt-shadow.md
 lomi-api-endpoints.md
 lomi-shadow.md
+
+# Local dev / RE tooling (not shipped with the HACS integration)
+tools/
