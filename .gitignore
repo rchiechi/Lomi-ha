@@ -17,3 +17,6 @@ venv/
 config/
 secrets.yaml
 *.log
+HACS.md
+.env
+lomi-mqtt-shadow.md
