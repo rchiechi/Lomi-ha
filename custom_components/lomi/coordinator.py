@@ -34,18 +34,14 @@ from .const import (
     ATTR_USER_DEVICE_ID,
     CONF_POLL_INTERVAL,
     CONF_POLL_PENDING,
-    CONF_POLL_STATUS,
     DEFAULT_MODE,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_POLL_PENDING,
-    DEFAULT_POLL_STATUS,
     DOMAIN,
     EVENT_LOMI,
     EVENT_TYPE_COMMAND_ACKED,
     EVENT_TYPE_COMMAND_ISSUED,
     EVENT_TYPE_CYCLE_FINISHED,
-    EVENT_TYPE_CYCLE_PAUSED,
-    EVENT_TYPE_CYCLE_RESUMED,
     EVENT_TYPE_CYCLE_STARTED,
     EVENT_TYPE_CYCLE_STATE_CHANGED,
     EVENT_TYPE_FILTER_COUNTER,
@@ -54,7 +50,6 @@ from .const import (
     EVENT_TYPE_LID_OPENED,
     EVENT_TYPE_RECORD_UPDATED,
     EVENT_TYPE_SHADOW_UPDATED,
-    EVENT_TYPE_STATUS_CHANGED,
 )
 from .shadow import LomiShadowClient, LomiShadowState
 
@@ -70,7 +65,6 @@ class LomiDeviceData:
     """Everything the coordinator knows about one device."""
 
     device: LomiDevice
-    status: dict[str, Any] = field(default_factory=dict)
     pending_commands: list[dict[str, Any]] = field(default_factory=list)
     last_command: dict[str, Any] | None = None
     selected_mode: str = DEFAULT_MODE
@@ -110,7 +104,6 @@ class LomiCoordinator(DataUpdateCoordinator[dict[str, LomiDeviceData]]):
             ),
         )
         self.client = client
-        self.poll_status: bool = options.get(CONF_POLL_STATUS, DEFAULT_POLL_STATUS)
         self.poll_pending: bool = options.get(CONF_POLL_PENDING, DEFAULT_POLL_PENDING)
         # Snapshot so the update listener can tell an options change from a
         # token rotation written to entry.data.
@@ -162,7 +155,6 @@ class LomiCoordinator(DataUpdateCoordinator[dict[str, LomiDeviceData]]):
             old = previous.get(device.user_device_id)
             data = LomiDeviceData(
                 device=device,
-                status=old.status if old else {},
                 pending_commands=old.pending_commands if old else [],
                 last_command=old.last_command if old else None,
                 selected_mode=old.selected_mode if old else DEFAULT_MODE,
@@ -191,23 +183,13 @@ class LomiCoordinator(DataUpdateCoordinator[dict[str, LomiDeviceData]]):
         }
 
     async def _async_poll_extras(self, result: dict[str, LomiDeviceData]) -> None:
-        """Fetch /devices/status and pending commands; failures are non-fatal."""
+        """Fetch pending commands; failures are non-fatal."""
         tasks = []
         for data in result.values():
-            if self.poll_status:
-                tasks.append(self._async_fetch_status(data))
             if self.poll_pending:
                 tasks.append(self._async_fetch_pending(data))
         if tasks:
             await asyncio.gather(*tasks)
-
-    async def _async_fetch_status(self, data: LomiDeviceData) -> None:
-        try:
-            data.status = await self.client.async_get_device_status(data.device.serial)
-        except LomiAuthError:
-            raise
-        except LomiError as err:
-            _LOGGER.debug("Status fetch failed for %s: %s", data.device.serial, err)
 
     async def _async_fetch_pending(self, data: LomiDeviceData) -> None:
         try:
@@ -258,8 +240,6 @@ class LomiCoordinator(DataUpdateCoordinator[dict[str, LomiDeviceData]]):
                     else None
                 },
             )
-        if new.status != old.status:
-            self._fire(new, EVENT_TYPE_STATUS_CHANGED, {"status": new.status})
 
         new_ids = {c.get("_id") for c in new.pending_commands}
         for cmd in old.pending_commands:
@@ -374,8 +354,6 @@ class LomiCoordinator(DataUpdateCoordinator[dict[str, LomiDeviceData]]):
             and not is_active
         ):
             self._fire(data, EVENT_TYPE_CYCLE_FINISHED, {**base, "finished": True})
-        if old.paused is not None and new.paused is not None and new.paused != old.paused:
-            self._fire(data, EVENT_TYPE_CYCLE_PAUSED if new.paused else EVENT_TYPE_CYCLE_RESUMED, base)
 
     @callback
     def set_selected_mode(self, user_device_id: str, mode: str) -> None:

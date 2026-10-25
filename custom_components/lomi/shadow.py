@@ -300,6 +300,20 @@ class LomiShadowState:
             return False
         return not self.paused
 
+    def _in_state(self, wire_state: str) -> bool | None:
+        wire = self._wire_state(self.current_state)
+        return None if wire is None else wire == wire_state
+
+    @property
+    def in_standby(self) -> bool | None:
+        """``currState`` is standby (the device never sends the ``standby`` key)."""
+        return self._in_state("standby")
+
+    @property
+    def in_recovery(self) -> bool | None:
+        """``currState`` is recovery (the device never sends the ``recovery`` key)."""
+        return self._in_state("recovery")
+
     @property
     def is_idle(self) -> bool | None:
         wire = self._wire_state(self.current_state)

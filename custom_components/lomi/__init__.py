@@ -7,7 +7,7 @@ import logging
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
@@ -42,6 +42,13 @@ PLATFORMS: list[Platform] = [
 ]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+# Entities dropped in 0.3.2: REST leftovers that never carry data, and shadow
+# keys (paused / finished / startDelay) the device has never reported.
+REMOVED_ENTITY_KEYS: dict[str, tuple[str, ...]] = {
+    "binary_sensor": ("command_pending", "cycle_finished", "paused"),
+    "sensor": ("last_filter_reset", "status", "start_delay"),
+}
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -83,6 +90,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: LomiConfigEntry) -> bool
     coordinator = LomiCoordinator(hass, entry, client)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+    _async_remove_stale_entities(hass, entry, coordinator)
 
     if entry.options.get(CONF_ENABLE_SHADOW, DEFAULT_ENABLE_SHADOW):
         _async_start_shadow(hass, entry, session, auth, coordinator)
@@ -90,6 +98,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: LomiConfigEntry) -> bool
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
+
+
+@callback
+def _async_remove_stale_entities(
+    hass: HomeAssistant, entry: LomiConfigEntry, coordinator: LomiCoordinator
+) -> None:
+    """Drop registry entries for entities this version no longer provides."""
+    serials = [d.device.serial for d in (coordinator.data or {}).values()]
+    stale = {
+        (domain, f"{serial}_{key}")
+        for domain, keys in REMOVED_ENTITY_KEYS.items()
+        for key in keys
+        for serial in serials
+    }
+    registry = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if (entity.domain, entity.unique_id) in stale:
+            registry.async_remove(entity.entity_id)
 
 
 @callback

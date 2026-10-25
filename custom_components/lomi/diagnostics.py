@@ -37,7 +37,6 @@ async def async_get_config_entry_diagnostics(
         dev = asdict(data.device)
         devices[uid] = {
             "device": dev,
-            "status": data.status,
             "pending_commands": data.pending_commands,
             "last_command": data.last_command,
             "selected_mode": data.selected_mode,
@@ -55,7 +54,6 @@ async def async_get_config_entry_diagnostics(
             "coordinator": {
                 "update_interval": str(coordinator.update_interval),
                 "last_update_success": coordinator.last_update_success,
-                "poll_status": coordinator.poll_status,
                 "poll_pending": coordinator.poll_pending,
             },
             "shadow": {

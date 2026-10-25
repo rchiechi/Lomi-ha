@@ -44,7 +44,6 @@
         "title": "Lomi options",
         "data": {
           "poll_interval": "Poll interval (seconds)",
-          "poll_device_status": "Also poll /devices/status",
           "poll_pending_commands": "Also poll pending commands",
           "enable_shadow": "Realtime device shadow (MQTT)",
           "shadow_token": "Shadow auth: token",
@@ -54,7 +53,6 @@
         },
         "data_description": {
           "poll_interval": "How often to fetch the device record from the Lomi cloud.",
-          "poll_device_status": "Transient status route; observed empty while idle, may carry cycle state.",
           "poll_pending_commands": "Needed for scheduled-start and command-acknowledged tracking.",
           "enable_shadow": "Subscribe to the AWS IoT device shadow for live state (lid, running, cycle phase, time remaining). Falls back to polling when off or unreachable.",
           "shadow_token": "Which Cognito token to present to the IoT custom authorizer. The app uses the plain Id token.",
@@ -70,9 +68,6 @@
       "filter_counter": {
         "name": "Filter counter"
       },
-      "last_filter_reset": {
-        "name": "Last filter reset"
-      },
       "filter_counter_modified": {
         "name": "Filter counter updated"
       },
@@ -81,9 +76,6 @@
       },
       "record_version": {
         "name": "Record version"
-      },
-      "status": {
-        "name": "Status"
       },
       "last_command": {
         "name": "Last command",
@@ -163,9 +155,6 @@
       "run_time": {
         "name": "Run time"
       },
-      "start_delay": {
-        "name": "Start delay"
-      },
       "filter_state": {
         "name": "Filter state"
       },
@@ -189,20 +178,11 @@
       "scheduled_start": {
         "name": "Scheduled start"
       },
-      "command_pending": {
-        "name": "Command pending"
-      },
       "lid_open": {
         "name": "Lid"
       },
       "running": {
         "name": "Running"
-      },
-      "paused": {
-        "name": "Paused"
-      },
-      "cycle_finished": {
-        "name": "Cycle finished"
       },
       "standby": {
         "name": "Standby"
@@ -251,14 +231,11 @@
               "record_updated": "Record updated",
               "filter_counter_changed": "Filter counter changed (cycle finished)",
               "filter_reset": "Filter reset",
-              "status_changed": "Status changed",
               "command_issued": "Command issued",
               "command_acknowledged": "Command acknowledged",
               "cycle_state_changed": "Cycle state changed",
               "cycle_started": "Cycle started",
               "cycle_finished": "Cycle finished",
-              "cycle_paused": "Cycle paused",
-              "cycle_resumed": "Cycle resumed",
               "lid_opened": "Lid opened",
               "lid_closed": "Lid closed"
             }

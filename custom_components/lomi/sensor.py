@@ -45,24 +45,6 @@ class LomiSensorDescription(SensorEntityDescription):
     live: bool = False
 
 
-def _status_state(data: LomiDeviceData) -> StateType:
-    """Best-effort state from /devices/status.
-
-    The route returns ``{}`` while idle; the populated shape has not been
-    captured yet, so look for the keys the app binary references.
-    """
-    status = data.status or {}
-    for key in ("state", "status", "cycleState", "mode"):
-        value = status.get(key)
-        if isinstance(value, (str, int, float)):
-            return str(value)
-    return None
-
-
-def _status_attrs(data: LomiDeviceData) -> dict[str, Any]:
-    return {"raw": data.status or {}}
-
-
 def _last_command_state(data: LomiDeviceData) -> StateType:
     if not data.last_command:
         return None
@@ -169,13 +151,6 @@ SENSORS: tuple[LomiSensorDescription, ...] = (
         value_fn=lambda d: d.device.last_filter_counter,
     ),
     LomiSensorDescription(
-        key="last_filter_reset",
-        translation_key="last_filter_reset",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        icon="mdi:calendar-refresh",
-        value_fn=lambda d: d.device.last_filter_reset_date,
-    ),
-    LomiSensorDescription(
         key="filter_counter_modified",
         translation_key="filter_counter_modified",
         device_class=SensorDeviceClass.TIMESTAMP,
@@ -196,13 +171,6 @@ SENSORS: tuple[LomiSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:counter",
         value_fn=lambda d: d.device.version,
-    ),
-    LomiSensorDescription(
-        key="status",
-        translation_key="status",
-        icon="mdi:compost",
-        value_fn=_status_state,
-        attrs_fn=_status_attrs,
     ),
     LomiSensorDescription(
         key="last_command",
@@ -275,19 +243,9 @@ SENSORS: tuple[LomiSensorDescription, ...] = (
         native_unit_of_measurement=SHADOW_DURATION_UNIT,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:timer-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=_run_time,
         attrs_fn=_countdown_attrs,
         live=True,
-    ),
-    LomiSensorDescription(
-        key="start_delay",
-        translation_key="start_delay",
-        device_class=SensorDeviceClass.DURATION,
-        native_unit_of_measurement=UnitOfTime.HOURS,
-        icon="mdi:timer-play-outline",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=_shadow_value("start_delay"),
     ),
     LomiSensorDescription(
         key="filter_state",
@@ -332,7 +290,7 @@ SENSORS: tuple[LomiSensorDescription, ...] = (
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-        value_fn=_shadow_value("last_updated"),
+        value_fn=_shadow_value("device_time"),
     ),
     LomiSensorDescription(
         key="device_type",

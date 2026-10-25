@@ -31,7 +31,6 @@ from .const import (
     CONF_ENABLE_SHADOW,
     CONF_POLL_INTERVAL,
     CONF_POLL_PENDING,
-    CONF_POLL_STATUS,
     CONF_REFRESH_TOKEN,
     CONF_SHADOW_CLIENT_ID,
     CONF_SHADOW_MQTT_USERNAME,
@@ -41,7 +40,6 @@ from .const import (
     DEFAULT_ENABLE_SHADOW,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_POLL_PENDING,
-    DEFAULT_POLL_STATUS,
     DEFAULT_SHADOW_CLIENT_ID,
     DEFAULT_SHADOW_MQTT_USERNAME,
     DEFAULT_SHADOW_TOKEN,
@@ -242,10 +240,6 @@ class LomiOptionsFlow(OptionsFlow):
                         mode=selector.NumberSelectorMode.BOX,
                     )
                 ),
-                vol.Required(
-                    CONF_POLL_STATUS,
-                    default=options.get(CONF_POLL_STATUS, DEFAULT_POLL_STATUS),
-                ): selector.BooleanSelector(),
                 vol.Required(
                     CONF_POLL_PENDING,
                     default=options.get(CONF_POLL_PENDING, DEFAULT_POLL_PENDING),

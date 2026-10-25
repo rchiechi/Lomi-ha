@@ -41,12 +41,6 @@ BINARY_SENSORS: tuple[LomiBinarySensorDescription, ...] = (
         icon="mdi:calendar-clock",
         is_on_fn=lambda d: bool(d.scheduled_starts),
     ),
-    LomiBinarySensorDescription(
-        key="command_pending",
-        translation_key="command_pending",
-        icon="mdi:progress-clock",
-        is_on_fn=lambda d: any(not c.get("scheduledStart") for c in d.pending_commands),
-    ),
     # ---- realtime (device shadow) ----------------------------------------
     LomiBinarySensorDescription(
         key="lid_open",
@@ -63,26 +57,12 @@ BINARY_SENSORS: tuple[LomiBinarySensorDescription, ...] = (
         is_on_fn=lambda d: _shadow(d, "is_running"),
     ),
     LomiBinarySensorDescription(
-        key="paused",
-        translation_key="paused",
-        icon="mdi:pause-circle",
-        shadow=True,
-        is_on_fn=lambda d: _shadow(d, "paused"),
-    ),
-    LomiBinarySensorDescription(
-        key="cycle_finished",
-        translation_key="cycle_finished",
-        icon="mdi:check-circle",
-        shadow=True,
-        is_on_fn=lambda d: _shadow(d, "finished"),
-    ),
-    LomiBinarySensorDescription(
         key="standby",
         translation_key="standby",
         icon="mdi:power-standby",
         entity_category=EntityCategory.DIAGNOSTIC,
         shadow=True,
-        is_on_fn=lambda d: _shadow(d, "standby"),
+        is_on_fn=lambda d: _shadow(d, "in_standby"),
     ),
     LomiBinarySensorDescription(
         key="recovery",
@@ -90,7 +70,7 @@ BINARY_SENSORS: tuple[LomiBinarySensorDescription, ...] = (
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         shadow=True,
-        is_on_fn=lambda d: _shadow(d, "recovery"),
+        is_on_fn=lambda d: _shadow(d, "in_recovery"),
     ),
     LomiBinarySensorDescription(
         key="shadow_connected",
