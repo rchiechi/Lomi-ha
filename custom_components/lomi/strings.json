@@ -157,6 +157,9 @@
       "time_remaining": {
         "name": "Time remaining"
       },
+      "cycle_end": {
+        "name": "Cycle end"
+      },
       "run_time": {
         "name": "Run time"
       },

@@ -42,7 +42,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 import logging
 import secrets
@@ -177,6 +177,17 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def _as_epoch(value: Any) -> datetime | None:
+    """Device epoch seconds (``currTime``) as an aware datetime."""
+    seconds = _as_int(value)
+    if not seconds or seconds <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(seconds, UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def _as_str(value: Any) -> str | None:
     if value is None:
         return None
@@ -200,8 +211,14 @@ class LomiShadowState:
     current_state: str | None
     previous_state: str | None
     start_delay: int | None
+    # tRem / runTime are seconds: the captured idle shadow reports
+    # tRem 17865 + runTime 3735 = 21600 s, the 6 h Eco-Express program.
+    # They are snapshots from the device's last report (``currTime``); the
+    # device does not republish them every minute, so live values are
+    # projected from that report (``remaining_at`` / ``elapsed_at``).
     time_remaining: int | None
     run_time: int | None
+    device_time: datetime | None
     cover_open: bool | None
     filter_state: str | None
     filter_counter: int | None
@@ -235,6 +252,7 @@ class LomiShadowState:
             start_delay=_as_int(reported.get("startDelay")),
             time_remaining=_as_int(reported.get("tRem")),
             run_time=_as_int(reported.get("runTime")),
+            device_time=_as_epoch(reported.get("currTime")),
             cover_open=_as_bool(reported.get("coverOpen")),
             filter_state=_as_bool_str(reported.get("filterState")),
             filter_counter=_as_int(reported.get("filterCounter")),
@@ -297,6 +315,45 @@ class LomiShadowState:
             return None
         return wire in _RUNNING_WIRE
 
+    @property
+    def _report_time(self) -> datetime:
+        """When tRem/runTime were sampled: the device clock, never in our future."""
+        if self.device_time is None:
+            return self.received_at
+        return min(self.device_time, self.received_at)
+
+    @property
+    def ends_at(self) -> datetime | None:
+        """Projected end of the running cycle, or None when not counting down."""
+        if not self.is_running or self.time_remaining is None:
+            return None
+        return self._report_time + timedelta(seconds=max(self.time_remaining, 0))
+
+    def remaining_at(self, now: datetime) -> float | None:
+        """Seconds left in the cycle as of ``now``.
+
+        Counts down from the last report while running, holds while paused and
+        is 0 when idle (the device keeps the aborted cycle's tRem in standby).
+        """
+        if self.time_remaining is None:
+            return None
+        if (ends_at := self.ends_at) is not None:
+            return max((ends_at - now).total_seconds(), 0.0)
+        if self.is_active is False:
+            return 0.0
+        return float(max(self.time_remaining, 0))
+
+    def elapsed_at(self, now: datetime) -> float | None:
+        """Seconds the cycle has run as of ``now`` (capped at the program length)."""
+        if self.run_time is None:
+            return None
+        if not self.is_running:
+            return float(self.run_time)
+        lived = max((now - self._report_time).total_seconds(), 0.0)
+        if self.time_remaining is not None:
+            lived = min(lived, max(self.time_remaining, 0))
+        return self.run_time + lived
+
     def as_dict(self) -> dict[str, Any]:
         """JSON-friendly view for diagnostics / attributes."""
         return {
@@ -308,6 +365,8 @@ class LomiShadowState:
             "start_delay": self.start_delay,
             "time_remaining": self.time_remaining,
             "run_time": self.run_time,
+            "device_time": self.device_time.isoformat() if self.device_time else None,
+            "ends_at": self.ends_at.isoformat() if self.ends_at else None,
             "cover_open": self.cover_open,
             "filter_state": self.filter_state,
             "filter_counter": self.filter_counter,

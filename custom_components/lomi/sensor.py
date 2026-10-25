@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+import math
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -14,18 +15,24 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import EntityCategory, UnitOfTime
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import StateType
+from homeassistant.util import dt as dt_util
 
 from .api import COMMANDS, MODE_NAMES
 from .coordinator import LomiConfigEntry, LomiCoordinator, LomiDeviceData
 from .entity import LomiEntity, async_setup_device_entities
 from .shadow import STATE_OPTIONS
 
-# Unit of ``tRem`` / ``runTime`` in the shadow. The app shows remaining time in
-# minutes; flip this if a live capture proves otherwise.
+# ``tRem`` / ``runTime`` arrive in seconds (see LomiShadowState); the sensors
+# report whole minutes, which is also the unit earlier versions registered.
 SHADOW_DURATION_UNIT = UnitOfTime.MINUTES
+
+# How often the countdown sensors re-project from the last shadow report while
+# a cycle runs; the device itself reports only occasionally.
+LIVE_TICK = timedelta(seconds=30)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -34,6 +41,8 @@ class LomiSensorDescription(SensorEntityDescription):
 
     value_fn: Callable[[LomiDeviceData], StateType | datetime]
     attrs_fn: Callable[[LomiDeviceData], dict[str, Any]] | None = None
+    # Re-render on a timer while a cycle runs (values projected from now).
+    live: bool = False
 
 
 def _status_state(data: LomiDeviceData) -> StateType:
@@ -80,6 +89,31 @@ def _shadow_value(attr: str) -> Callable[[LomiDeviceData], StateType | datetime]
         return getattr(data.shadow, attr)
 
     return _get
+
+
+def _time_remaining(data: LomiDeviceData) -> StateType:
+    if data.shadow is None:
+        return None
+    seconds = data.shadow.remaining_at(dt_util.utcnow())
+    return None if seconds is None else math.ceil(seconds / 60)
+
+
+def _run_time(data: LomiDeviceData) -> StateType:
+    if data.shadow is None:
+        return None
+    seconds = data.shadow.elapsed_at(dt_util.utcnow())
+    return None if seconds is None else math.floor(seconds / 60)
+
+
+def _countdown_attrs(data: LomiDeviceData) -> dict[str, Any]:
+    if data.shadow is None:
+        return {}
+    sh = data.shadow
+    return {
+        "reported_time_remaining_s": sh.time_remaining,
+        "reported_run_time_s": sh.run_time,
+        "device_time": sh.device_time.isoformat() if sh.device_time else None,
+    }
 
 
 def _cycle_state(data: LomiDeviceData) -> StateType:
@@ -223,7 +257,16 @@ SENSORS: tuple[LomiSensorDescription, ...] = (
         native_unit_of_measurement=SHADOW_DURATION_UNIT,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:timer-sand",
-        value_fn=_shadow_value("time_remaining"),
+        value_fn=_time_remaining,
+        attrs_fn=_countdown_attrs,
+        live=True,
+    ),
+    LomiSensorDescription(
+        key="cycle_end",
+        translation_key="cycle_end",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:timer-check-outline",
+        value_fn=_shadow_value("ends_at"),
     ),
     LomiSensorDescription(
         key="run_time",
@@ -233,7 +276,9 @@ SENSORS: tuple[LomiSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:timer-outline",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=_shadow_value("run_time"),
+        value_fn=_run_time,
+        attrs_fn=_countdown_attrs,
+        live=True,
     ),
     LomiSensorDescription(
         key="start_delay",
@@ -343,6 +388,20 @@ class LomiSensor(LomiEntity, SensorEntity):
         """Initialise the sensor."""
         super().__init__(coordinator, user_device_id, description.key)
         self.entity_description = description
+
+    async def async_added_to_hass(self) -> None:
+        """Start the countdown timer for live sensors."""
+        await super().async_added_to_hass()
+        if self.entity_description.live:
+            self.async_on_remove(
+                async_track_time_interval(self.hass, self._async_tick, LIVE_TICK)
+            )
+
+    @callback
+    def _async_tick(self, _now: datetime) -> None:
+        data = self.data
+        if data is not None and data.shadow is not None and data.shadow.is_running:
+            self.async_write_ha_state()
 
     @property
     def native_value(self) -> StateType | datetime:

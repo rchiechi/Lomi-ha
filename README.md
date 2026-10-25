@@ -24,7 +24,8 @@ production with a Lomi 3. Not affiliated with Pela / Lomi.
 | sensor | **Last filter reset** | `lastFilterResetDate`. |
 | sensor | **Next scheduled start**, **Pending commands** | From the pending-command queue. |
 | sensor | **Cycle state** | Live, from the device shadow (`currState`): Standby, Grow, Eco-Express, Lomi Approved, Mixing, Drying, Cooling, Cleaning, Recovery, Filter … Stage details, pause / finished flags and the raw value are attributes. |
-| sensor | **Time remaining**, **Run time**, **Start delay** | Live, from the shadow (`tRem`, `runTime`, `startDelay`). |
+| sensor | **Time remaining**, **Run time**, **Start delay** | Live, from the shadow (`tRem`, `runTime`, `startDelay`). `tRem`/`runTime` are seconds on the wire and shown in minutes; the device reports them only occasionally, so while a cycle runs they count down from its last report (`currTime`). Time remaining is 0 when idle. |
+| sensor | **Cycle end** | When the running cycle is projected to finish (empty when not running). |
 | sensor | **Firmware version**, **Filter state**, **Last shadow update** | Live, diagnostic. Firmware is also written to the device registry. |
 | binary_sensor | **Lid**, **Running**, **Paused**, **Cycle finished** | Live, from the shadow (`coverOpen`, `currState` + `paused`, `finished`). |
 | binary_sensor | **Standby**, **Power-loss recovery**, **Realtime connection** | Live, diagnostic. The connection sensor exposes the last MQTT error as an attribute. |
@@ -47,7 +48,7 @@ The **Activity** event entity (and the `lomi_event` bus event) fire on:
 | `command_issued` | A command was sent from Home Assistant. |
 | `command_acknowledged` | A pending/scheduled command left the pending queue (device acked it). |
 | `cycle_started` / `cycle_finished` | Live: the shadow moved into / out of a running state. |
-| `cycle_state_changed` | Live: `currState` changed (`state`, `previous_state`, `time_remaining` in the payload). |
+| `cycle_state_changed` | Live: `currState` changed (`state`, `previous_state`, `time_remaining` in seconds in the payload). |
 | `cycle_paused` / `cycle_resumed` | Live: `paused` flipped. |
 | `lid_opened` / `lid_closed` | Live: `coverOpen` flipped. |
 | `shadow_updated` | Bus event only (not on the event entity): every shadow document, with all parsed fields. |
@@ -210,8 +211,7 @@ to see the exact connect parameters and every shadow document.
   session at MQTT CONNECT — the `devices=<serial>` part of the MQTT user name
   is the device-ownership claim; if it refuses the connection the *Realtime
   connection* sensor stays off with the reason in its `last_error` attribute
-  and everything falls back to polling. The unit of **Time remaining** / **Run time** is assumed to be
-  minutes (`SHADOW_DURATION_UNIT` in `sensor.py`).
+  and everything falls back to polling.
 * `/devices/status` has only ever been observed as `{}`. If you catch it
   populated, open an issue with the diagnostics download
   (Settings → Devices & services → Lomi → ⋮ → Download diagnostics; it is
